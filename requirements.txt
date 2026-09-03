@@ -1,0 +1,9 @@
+python-telegram-bot
+SQLAlchemy
+psycopg2-binary
+python-dotenv
+beautifulsoup4
+selenium
+requests
+yandexcloud
+yandex-cloud-ml-sdk
