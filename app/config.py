@@ -6,6 +6,7 @@ load_dotenv()
 
 # === Telegram ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY", "")
 
 # === PostgreSQL ===
 DB_HOST = os.getenv("DB_HOST", "localhost")
