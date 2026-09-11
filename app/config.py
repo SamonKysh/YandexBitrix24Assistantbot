@@ -19,5 +19,5 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 # === Yandex Cloud ===
 YC_API_KEY = os.getenv("YC_API_KEY")
 YC_FOLDER_ID = os.getenv("YC_FOLDER_ID")
-YC_ASSISTANT_ID = os.getenv("YC_ASSISTANT_ID")
+YC_AGENT_ID = os.getenv("YC_AGENT_ID")
 YC_KB_ID = os.getenv("YC_KB_ID")
