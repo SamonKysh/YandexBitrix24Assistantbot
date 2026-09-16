@@ -72,6 +72,6 @@ def parse_and_save():
         driver.quit()
         
     print(f"\n🎉 Парсинг завершен! Успешно обработано {parsed_count} страниц.")
-
+    return parsed_count
 if __name__ == "__main__":
     parse_and_save()
