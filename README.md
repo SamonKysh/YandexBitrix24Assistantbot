@@ -20,6 +20,7 @@
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота, полученный от @BotFather | `123456789:AAF...` |
 | `TELEGRAM_PROXY` | SOCKS/HTTP прокси для обхода блокировок (если не нужен — оставить пустым) | `socks5://127.0.0.1:1080` |
+| `ADMIN_TELEGRAM_IDS` | Telegram ID администраторов проекта (через запятую). Только им доступна команда `/update_docs` | `123456789,987654321` |
 | `DB_HOST` | Хост базы данных PostgreSQL | `localhost` |
 | `DB_PORT` | Порт PostgreSQL | `5432` |
 | `DB_NAME` | Имя базы данных | `bitrix_bot_db` |
