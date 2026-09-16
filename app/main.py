@@ -30,6 +30,7 @@ def main():
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CommandHandler("history", bot.history_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_question))
+    application.add_handler(CommandHandler("update_docs", bot.update_docs))
 
     print("🚀 Бот запущен и ожидает сообщения... (остановка: Ctrl+C)")
     application.run_polling()
