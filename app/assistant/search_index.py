@@ -160,7 +160,7 @@ class SearchIndex:
                         cache[hashes[i]] = np.array(vec, dtype=np.float32)
                     done += len(batch_idx)
                     logger.info("Эмбеддинги: %d/%d", done, len(missing_idx))
-                    self._save_cache(hashes, cache)  # защита от обрыва сети
+                    self._save_cache(hashes, cache)  # защита от обрыва
                 except Exception as exc:
                     logger.error("Ошибка батча эмбеддингов, остаюсь на BM25: %s", exc)
                     self.vectors = None
@@ -231,31 +231,28 @@ class SearchIndex:
             scores.append(score)
         return scores
 
-def _semantic_ranking(self, query: str) -> Optional[List[int]]:
-    try:
-        query_model = self.sdk.chat.text_embeddings(EMBEDDING_QUERY_MODEL)
-        qvec = np.array(query_model.run(query), dtype=np.float32)
-    except Exception as exc:
-        logger.error("Не удалось эмбеддить запрос, использую только BM25: %s", exc)
-        return None
-    norm = np.linalg.norm(qvec)
-    if norm == 0:
-        return None
-    sims = self.vectors @ (qvec / norm)  # косинусное сходство
-    
-    # Убираем дубликаты: сортируем по (score, index) для стабильности
-    ranked_with_scores = [(i, sims[i]) for i in range(len(sims))]
-    ranked_with_scores.sort(key=lambda x: (-x[1], x[0]))  # сначала по score desc, потом по index asc
-    
-    # Возвращаем только индексы без дубликатов
-    seen_urls = set()
-    result = []
-    for idx, score in ranked_with_scores:
-        url = self.chunks[idx].url or self.chunks[idx].filename
-        if url not in seen_urls:
-            seen_urls.add(url)
-            result.append(idx)
-    return result
+    def _semantic_ranking(self, query: str) -> Optional[List[int]]:
+        try:
+            query_model = self.sdk.chat.text_embeddings(EMBEDDING_QUERY_MODEL)
+            qvec = np.array(query_model.run(query), dtype=np.float32)
+        except Exception as exc:
+            logger.error("Не удалось эмбеддить запрос, использую только BM25: %s", exc)
+            return None
+        norm = np.linalg.norm(qvec)
+        if norm == 0:
+            return None
+        sims = self.vectors @ (qvec / norm)  # косинусное сходство
+
+        # Убираем дубликаты источников: лучший чанк на страницу
+        order = sorted(range(len(sims)), key=lambda i: sims[i], reverse=True)
+        seen = set()
+        result = []
+        for idx in order:
+            key = self.chunks[idx].url or self.chunks[idx].filename
+            if key not in seen:
+                seen.add(key)
+                result.append(idx)
+        return result
 
     def _rrf(self, rankings: List[List[int]]) -> List[float]:
         """Reciprocal Rank Fusion: score(d) = Σ по ранжированиям 1/(k + rank(d))."""
