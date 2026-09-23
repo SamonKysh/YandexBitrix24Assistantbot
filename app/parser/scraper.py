@@ -1,7 +1,8 @@
 import os
 import time
-from urllib.parse import urljoin, urlparse
+import xml.etree.ElementTree as ET
 
+import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -12,40 +13,63 @@ from app.config import PARSE_MAX_PAGES, PARSE_DELAY_SECONDS
 from app.logger import logger
 
 DATA_DIR = "data/docs"
+SITEMAP_URL = "https://apidocs.bitrix24.ru/sitemap.xml"
 BASE_URL = "https://apidocs.bitrix24.ru/"
-START_URL = "https://apidocs.bitrix24.ru/api-reference/"
 
 
 def setup_driver() -> webdriver.Chrome:
-    """Headless Chrome для рендеринга JS-страниц документации."""
+    """Headless Chrome с оптимизациями для быстрого рендеринга."""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
+    # Оптимизации: отключаем картинки и CSS для ускорения
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.managed_default_content_settings.stylesheets": 2,
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
+    
     service = Service(ChromeDriverManager().install())
     return webdriver.Chrome(service=service, options=chrome_options)
 
 
-def _normalize(url: str) -> str:
-    """Канонический вид URL: без query-параметров и якорей."""
-    parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+def fetch_sitemap_urls() -> list[str]:
+    """Скачивает sitemap.xml и извлекает все URL."""
+    logger.info("Скачиваю sitemap.xml...")
+    try:
+        response = requests.get(SITEMAP_URL, timeout=30)
+        response.raise_for_status()
+    except Exception as exc:
+        logger.error("Не удалось скачать sitemap: %s", exc)
+        return []
+
+    # Парсим XML
+    root = ET.fromstring(response.content)
+    # Namespace в sitemap: http://www.sitemaps.org/schemas/sitemap/0.9
+    namespace = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    
+    urls = []
+    for loc in root.findall(".//ns:loc", namespace):
+        url = loc.text.strip()
+        # Фильтруем только страницы API-методов
+        if url.startswith(BASE_URL) and "/api-reference/" in url and url.endswith(".html"):
+            urls.append(url)
+    
+    logger.info("Найдено %d URL в sitemap (после фильтрации)", len(urls))
+    return urls
 
 
-def _is_doc_url(url: str) -> bool:
-    """Страница с описанием API-метода, а не навигация."""
-    return url.startswith(BASE_URL) and "/api-reference/" in url and url.endswith(".html")
-
-
-def _save_soup(soup: BeautifulSoup, url: str):
-    """Сохраняет очищенный текст страницы в .txt файл. Возвращает имя файла."""
+def save_page(soup: BeautifulSoup, url: str) -> str | None:
+    """Сохраняет очищенный текст страницы в .txt файл."""
     try:
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.extract()
         text = soup.get_text(separator="\n", strip=True)
         filename = url.rstrip("/").split("/")[-1].replace(".html", ".txt")
-        with open(os.path.join(DATA_DIR, filename), "w", encoding="utf-8") as f:
+        filepath = os.path.join(DATA_DIR, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(f"Source: {url}\n\n{text}")
         return filename
     except Exception as exc:
@@ -55,60 +79,52 @@ def _save_soup(soup: BeautifulSoup, url: str):
 
 def parse_and_save() -> int:
     """
-    Обходит ВСЮ документацию Bitrix24 (BFS по внутренним ссылкам),
-    сохраняет страницы и удаляет устаревшие файлы (замечания №2 и №5).
+    Парсит ВСЮ документацию через sitemap.xml (замечание №2),
+    удаляет устаревшие файлы (замечание №5).
     """
     os.makedirs(DATA_DIR, exist_ok=True)
+    
+    # Получаем список всех URL из sitemap
+    all_urls = fetch_sitemap_urls()
+    if not all_urls:
+        logger.error("Не удалось получить URL из sitemap")
+        return 0
+    
+    # Ограничиваем количество страниц (для тестирования)
+    urls_to_parse = all_urls[:PARSE_MAX_PAGES]
+    logger.info("Будет обработано %d из %d страниц", len(urls_to_parse), len(all_urls))
+    
     driver = setup_driver()
-    visited = set()
-    queue = [_normalize(START_URL)]
     written = set()
-
+    
     try:
-        while queue and len(visited) < PARSE_MAX_PAGES:
-            url = queue.pop(0)
-            if url in visited:
-                continue
-            visited.add(url)
-
+        for i, url in enumerate(urls_to_parse, 1):
+            logger.info("[%d/%d] Парсинг: %s", i, len(urls_to_parse), url)
             try:
                 driver.get(url)
                 time.sleep(PARSE_DELAY_SECONDS)
                 soup = BeautifulSoup(driver.page_source, "html.parser")
-            except Exception as exc:
-                logger.warning("Не удалось открыть %s: %s", url, exc)
-                continue
-
-            if _is_doc_url(url):
-                filename = _save_soup(soup, url)
+                filename = save_page(soup, url)
                 if filename:
                     written.add(filename)
-
-            # Добавляем в очередь все внутренние ссылки страницы
-            for a in soup.find_all("a", href=True):
-                link = _normalize(urljoin(url, a["href"]))
-                if link.startswith(BASE_URL) and link not in visited:
-                    queue.append(link)
-
-            if len(visited) % 10 == 0:
-                logger.info("Просмотрено страниц: %d | сохранено документов: %d",
-                            len(visited), len(written))
+            except Exception as exc:
+                logger.warning("Не удалось обработать %s: %s", url, exc)
     finally:
         driver.quit()
-
-    # Замечание №5: удаляем файлы страниц, которых больше нет в документации
+    
+    # Замечание №5: удаляем устаревшие файлы
     removed = 0
     for name in os.listdir(DATA_DIR):
         if name.endswith(".txt") and name not in written:
             os.remove(os.path.join(DATA_DIR, name))
             removed += 1
-
+    
     logger.info("Устаревших файлов удалено: %d", removed)
     logger.info("Парсинг завершён: сохранено документов: %d", len(written))
     return len(written)
 
 
 if __name__ == "__main__":
-    logger.info("Запуск полного парсинга документации Bitrix24...")
+    logger.info("Запуск парсинга документации Bitrix24 через sitemap...")
     count = parse_and_save()
     logger.info("Готово. Страниц в базе знаний: %d", count)
