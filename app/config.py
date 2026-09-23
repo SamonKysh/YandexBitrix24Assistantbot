@@ -31,3 +31,10 @@ YC_KB_ID = os.getenv("YC_KB_ID")
 # === Парсер документации ===
 PARSE_MAX_PAGES = int(os.getenv("PARSE_MAX_PAGES", "5000"))   # лимит страниц (защита от бесконечного обхода)
 PARSE_DELAY_SECONDS = float(os.getenv("PARSE_DELAY_SECONDS", "1.5"))  # вежливая задержка между запросами
+
+# === Гибридный поиск ===
+USE_SEMANTIC_SEARCH = os.getenv("USE_SEMANTIC_SEARCH", "true").lower() == "true"
+EMBEDDING_DOC_MODEL = os.getenv("EMBEDDING_DOC_MODEL", "text-search-doc")
+EMBEDDING_QUERY_MODEL = os.getenv("EMBEDDING_QUERY_MODEL", "text-search-query")
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "16"))
+EMBEDDING_CACHE_PATH = os.getenv("EMBEDDING_CACHE_PATH", "data/embeddings_cache.npz")

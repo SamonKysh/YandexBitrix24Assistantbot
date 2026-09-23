@@ -10,4 +10,4 @@ yandex-cloud-ml-sdk
 webdriver-manager
 yandex-ai-studio-sdk
 openai
-requests
+numpy
