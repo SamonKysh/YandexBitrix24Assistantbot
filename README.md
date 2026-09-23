@@ -89,3 +89,5 @@ chunk_embeddings с типом vector и косинусным операторо
    set NO_PROXY=*
 5. Запустите бота:
    python -m app.main
+
+### 3. Демонстрация работы по ссылке: https://disk.yandex.ru/i/JLBleyb9Q1j9qA
