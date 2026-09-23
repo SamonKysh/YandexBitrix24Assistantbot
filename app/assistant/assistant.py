@@ -1,7 +1,7 @@
 import os
 import re
 from collections import Counter
-
+from app.logger import logger
 from yandex_ai_studio_sdk import AIStudio
 from yandex_ai_studio_sdk.auth import APIKeyAuth
 
@@ -65,7 +65,7 @@ def retrieve(question, documents, top_k=3):
 def ask_assistant(question: str) -> str:
     """RAG: поиск фрагментов -> генерация ответа YandexGPT -> ссылки на источники."""
     try:
-        print("📖 Подбор релевантных фрагментов документации...")
+        logger.info("📖 Подбор релевантных фрагментов документации...")
         documents = load_documents()
         chunks = retrieve(question, documents)
 
@@ -86,7 +86,7 @@ def ask_assistant(question: str) -> str:
 {context}
 === КОНЕЦ ФРАГМЕНТОВ ==="""
 
-        print("🤖 Отправка запроса в YandexGPT...")
+        logger.info("🤖 Отправка запроса в YandexGPT...")
         model = sdk.models.completions('yandexgpt')
         model = model.configure(temperature=0.3, max_tokens=2000)
 
@@ -114,7 +114,7 @@ def ask_assistant(question: str) -> str:
 
 
 if __name__ == "__main__":
-    print("🤖 Тестируем RAG с источниками...")
+    logger.info("🤖 Тестируем RAG с источниками...")
     q = "Как добавить новую сделку в CRM через REST API?"
-    print(f"Вопрос: {q}\n")
-    print(f"Ответ ассистента:\n{ask_assistant(q)}")
+    logger.info(f"Вопрос: {q}\n")
+    logger.info(f"Ответ ассистента:\n{ask_assistant(q)}")

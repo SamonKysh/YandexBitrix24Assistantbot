@@ -1,14 +1,14 @@
-import logging
+from app.logger import logger
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 
 from app.config import TELEGRAM_BOT_TOKEN, TELEGRAM_PROXY
 from app.telegram_bot import bot
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+#logging.basicConfig(
+    #format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+   # level=logging.INFO,
+#)
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
@@ -32,7 +32,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_question))
     application.add_handler(CommandHandler("update_docs", bot.update_docs))
 
-    print("🚀 Бот запущен и ожидает сообщения... (остановка: Ctrl+C)")
+    logger.info("🚀 Бот запущен и ожидает сообщения...")
     application.run_polling()
 
 if __name__ == "__main__":

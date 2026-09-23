@@ -1,5 +1,6 @@
 import os
 import time
+from app.logger import logger
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -38,7 +39,7 @@ def parse_and_save():
     
     try:
         for url in URLS_TO_PARSE:
-            print(f"🔍 Парсинг: {url}")
+            logger.info(f"🔍 Парсинг: {url}")
             driver.get(url)
             
             # Ждем 4 секунды, чтобы прогрузился JavaScript на сайте Bitrix24
@@ -65,13 +66,13 @@ def parse_and_save():
                 f.write(f"Источник: {url}\n\n")
                 f.write(text)
                 
-            print(f"✅ Успешно сохранено: {filepath}")
+            logger.info(f"✅ Успешно сохранено: {filepath}")
             parsed_count += 1
             
     finally:
         driver.quit()
         
-    print(f"\n🎉 Парсинг завершен! Успешно обработано {parsed_count} страниц.")
+    logger.info(f"\n🎉 Парсинг завершен! Успешно обработано {parsed_count} страниц.")
     return parsed_count
 if __name__ == "__main__":
     parse_and_save()
