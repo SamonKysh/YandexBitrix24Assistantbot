@@ -1,13 +1,20 @@
 """
 Гибридный поисковый индекс базы знаний Bitrix24.
 
+Замечание №7: лексический поиск BM25 + семантический поиск
+(эмбеддинги YandexGPT, косинусное сходство) с объединением через RRF.
+Замечание №4: индекс и векторы строятся один раз при старте,
+векторы кэшируются на диске и не пересчитываются при перезапуске.
+Замечание №5: устаревшие векторы удаляются вместе с устаревшими чанками.
 """
 import hashlib
 import math
 import os
 import re
 import threading
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -18,6 +25,7 @@ from app.config import (
     EMBEDDING_CACHE_PATH,
     EMBEDDING_DOC_MODEL,
     EMBEDDING_QUERY_MODEL,
+    EMBEDDING_WORKERS,
     USE_SEMANTIC_SEARCH,
 )
 from app.logger import logger
@@ -143,7 +151,7 @@ class SearchIndex:
 
         missing_idx = [i for i, h in enumerate(hashes) if h not in cache]
         if missing_idx:
-            logger.info("Вычисляю эмбеддинги для %d новых чанков...", len(missing_idx))
+            logger.info("Вычисляю эмбеддинги для %d чанков (последовательно)...", len(missing_idx))
             try:
                 doc_model = self.sdk.chat.text_embeddings(EMBEDDING_DOC_MODEL)
             except Exception as exc:
@@ -152,30 +160,30 @@ class SearchIndex:
                 return
 
             done = 0
-            for start in range(0, len(missing_idx), EMBEDDING_BATCH_SIZE):
-                batch_idx = missing_idx[start:start + EMBEDDING_BATCH_SIZE]
+            for i in missing_idx:
                 try:
-                    for i in batch_idx:
-                        vec = doc_model.run(self.chunks[i].text)
-                        cache[hashes[i]] = np.array(vec, dtype=np.float32)
-                    done += len(batch_idx)
-                    logger.info("Эмбеддинги: %d/%d", done, len(missing_idx))
-                    self._save_cache(hashes, cache)  # защита от обрыва
+                    vec = doc_model.run(self.chunks[i].text)
+                    cache[hashes[i]] = np.array(vec, dtype=np.float32)
+                    done += 1
+                    if done % 50 == 0 or done == len(missing_idx):
+                        logger.info("Эмбеддинги: %d/%d", done, len(missing_idx))
+                        self._save_cache(hashes, cache)  # прогресс сохраняется
                 except Exception as exc:
-                    logger.error("Ошибка батча эмбеддингов, остаюсь на BM25: %s", exc)
+                    logger.error("Ошибка эмбеддинга чанка %d: %s; сохраняю прогресс", i, exc)
+                    self._save_cache(hashes, cache)
                     self.vectors = None
                     return
 
-        # Замечание №5: устаревшие векторы не хранятся
-        cache = {h: cache[h] for h in hashes if h in cache}
-        if len(cache) != len(hashes):
-            logger.warning("Не хватает векторов для %d чанков, остаюсь на BM25",
-                           len(hashes) - len(cache))
+        unique_hashes = list(dict.fromkeys(hashes))
+        cache = {h: cache[h] for h in unique_hashes if h in cache}
+        if len(cache) != len(unique_hashes):
+            logger.warning("Не хватает векторов для %d уникальных чанков, остаюсь на BM25",
+                           len(unique_hashes) - len(cache))
             self.vectors = None
             return
-        self._save_cache(hashes, cache)
+        self._save_cache(unique_hashes, cache)
+        matrix = np.stack([cache[h] for h in hashes])  # по чанкам, дубли берут тот же вектор
 
-        matrix = np.stack([cache[h] for h in hashes])
         norms = np.linalg.norm(matrix, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         self.vectors = matrix / norms
@@ -292,6 +300,4 @@ class SearchIndex:
     def _tokenize(cls, text: str) -> List[str]:
         return [cls._stem(t) for t in re.findall(r"[a-zа-яё0-9_.]+", text.lower())]
 
-
-# Глобальный экземпляр индекса — один на всё приложение
 index = SearchIndex()
