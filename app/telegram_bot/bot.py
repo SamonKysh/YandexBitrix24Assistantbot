@@ -8,6 +8,10 @@ from app.assistant.assistant import ask_assistant
 from app.parser.scraper import parse_and_save
 from app.config import ADMIN_TELEGRAM_IDS
 
+from app.assistant.search_index import index
+
+_update_lock = asyncio.Lock()
+
 MAX_MESSAGE_LEN = 4096
 
 
@@ -65,25 +69,36 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обновляет документацию парсером Selenium. Доступно только администраторам из .env."""
+    """Обновление документации. Замечание №6: взаимная блокировка запусков."""
     user = update.effective_user
     if not is_admin(user.id):
         await update.message.reply_text(
-            "⛔ Доступ запрещён: команда обновления документации доступна "
-            "только администраторам проекта."
+            "⛔ Доступ запрещён: команда доступна только администраторам проекта."
         )
         return
 
-    status_msg = await update.message.reply_text(
-        "🔄 Обновляю документацию Bitrix24... Это может занять несколько минут."
-    )
-    try:
-        parsed_count = await asyncio.to_thread(parse_and_save)
-        await status_msg.edit_text(
-            f"✅ Документация обновлена: перезагружено страниц — {parsed_count}."
+    # Если обновление уже идёт — сразу отвечаем и выходим
+    if _update_lock.locked():
+        await update.message.reply_text(
+            "⏳ Обновление документации уже выполняется другим администратором. "
+            "Дождитесь завершения."
         )
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка при обновлении документации: {e}")
+        return
+
+    async with _update_lock:
+        status_msg = await update.message.reply_text(
+            "🔄 Обновляю документацию Bitrix24... Это может занять несколько минут."
+        )
+        try:
+            parsed_count = await asyncio.to_thread(parse_and_save)
+            await status_msg.edit_text("📚 Документация собрана. Перестраиваю поисковый индекс...")
+            chunks_count = await asyncio.to_thread(index.build)
+            await status_msg.edit_text(
+                f"✅ Готово: страниц — {parsed_count}, чанков в индексе — {chunks_count}."
+            )
+        except Exception as exc:
+            logger.error("Ошибка обновления документации: %s", exc, exc_info=True)
+            await status_msg.edit_text(f"❌ Ошибка при обновлении: {exc}")
 
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -63,34 +63,43 @@ def retrieve(question, documents, top_k=3):
 
 
 def ask_assistant(question: str) -> str:
-    """RAG: поиск фрагментов -> генерация ответа YandexGPT -> ссылки на источники."""
+    """RAG с использованием поискового индекса (BM25). Ссылки на источники в конце."""
     try:
-        logger.info("📖 Подбор релевантных фрагментов документации...")
-        documents = load_documents()
-        chunks = retrieve(question, documents)
+        from app.assistant.search_index import index
 
-        if not chunks:
-            return ("Не нашёл ответа в документации Bitrix24 по этому вопросу. "
-                    "Попробуйте переформулировать его или попросите администратора "
-                    "обновить базу знаний командой /update_docs.")
+        if not index.chunks:
+            return (
+                "База знаний пуста. Попросите администратора обновить "
+                "документацию командой /update_docs."
+            )
+
+        logger.info("Поиск по индексу: %s", question)
+        chunks = index.search(question, top_k=3)
+
+        if not chunks or chunks[0].score == 0:
+            return (
+                "Не нашёл ответа в документации Bitrix24. "
+                "Попробуйте переформулировать вопрос или обновите базу знаний "
+                "командой /update_docs."
+            )
 
         context = "\n\n".join(
-            f"[Источник фрагмента: {c['url'] or c['filename']}]\n{c['text']}" for c in chunks
+            f"[Источник: {c.url or c.filename}]\n{c.text}" for c in chunks
         )
 
         system_prompt = f"""Ты — опытный технический консультант по API Bitrix24.
-Отвечай на вопрос разработчика кратко и по существу, опираясь ТОЛЬКО на фрагменты документации ниже.
-Если во фрагментах нет ответа — честно скажи об этом. Приводи примеры кода, если они есть в тексте.
+Отвечай кратко и по существу, опираясь ТОЛЬКО на фрагменты документации ниже.
+Если во фрагментах нет ответа — честно скажи об этом.
 
 === ФРАГМЕНТЫ ДОКУМЕНТАЦИИ ===
 {context}
 === КОНЕЦ ФРАГМЕНТОВ ==="""
 
-        logger.info("🤖 Отправка запроса в YandexGPT...")
+        logger.info("Отправка запроса в YandexGPT...")
         model = sdk.models.completions('yandexgpt')
         model = model.configure(temperature=0.3, max_tokens=2000)
 
-        full_prompt = f"{system_prompt}\n\nВопрос разработчика: {question}"
+        full_prompt = f"{system_prompt}\n\nВопрос: {question}"
         result = model.run(full_prompt)
 
         answer = None
@@ -100,18 +109,18 @@ def ask_assistant(question: str) -> str:
         if not answer:
             return "Не удалось получить ответ от модели."
 
-        # Требование руководителя: ссылки на фрагменты документации в конце ответа
+        # Ссылки на источники (замечание руководителя)
         sources = []
         for c in chunks:
-            link = c["url"] or c["filename"]
-            if link not in sources:
+            link = c.url or c.filename
+            if link and link not in sources:
                 sources.append(link)
-        answer += "\n\n📚 Источник(и) в документации:\n" + "\n".join(f"• {s}" for s in sources)
+        answer += "\n\n📚 Источники:\n" + "\n".join(f"• {s}" for s in sources)
         return answer
 
-    except Exception as e:
-        return f"Ошибка при обращении к YandexGPT: {e}"
-
+    except Exception as exc:
+        logger.error("Ошибка при обращении к YandexGPT: %s", exc, exc_info=True)
+        return f"Ошибка при генерации ответа: {exc}"
 
 if __name__ == "__main__":
     logger.info("🤖 Тестируем RAG с источниками...")
