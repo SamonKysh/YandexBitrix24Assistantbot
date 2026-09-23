@@ -27,3 +27,7 @@ YC_API_KEY = os.getenv("YC_API_KEY")
 YC_FOLDER_ID = os.getenv("YC_FOLDER_ID")
 YC_AGENT_ID = os.getenv("YC_AGENT_ID")
 YC_KB_ID = os.getenv("YC_KB_ID")
+
+# === Парсер документации ===
+PARSE_MAX_PAGES = int(os.getenv("PARSE_MAX_PAGES", "5000"))   # лимит страниц (защита от бесконечного обхода)
+PARSE_DELAY_SECONDS = float(os.getenv("PARSE_DELAY_SECONDS", "1.5"))  # вежливая задержка между запросами

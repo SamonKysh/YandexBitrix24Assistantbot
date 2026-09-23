@@ -1,78 +1,114 @@
 import os
 import time
-from app.logger import logger
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from urllib.parse import urljoin, urlparse
+
 from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
-# Папка для сохранения собранных документов
+from app.config import PARSE_MAX_PAGES, PARSE_DELAY_SECONDS
+from app.logger import logger
+
 DATA_DIR = "data/docs"
-os.makedirs(DATA_DIR, exist_ok=True)
+BASE_URL = "https://apidocs.bitrix24.ru/"
+START_URL = "https://apidocs.bitrix24.ru/api-reference/"
 
-# Список страниц для парсинга (для примера возьмем 3 ключевых метода CRM)
-# В реальном проекте здесь можно собрать все ссылки с главной страницы
-URLS_TO_PARSE = [
-    "https://apidocs.bitrix24.ru/api-reference/crm/deals/crm-deal-add.html",
-    "https://apidocs.bitrix24.ru/api-reference/crm/leads/crm-lead-add.html",
-    "https://apidocs.bitrix24.ru/api-reference/crm/contacts/crm-contact-add.html"
-]
 
-def setup_driver():
-    """Настройка headless-браузера Chrome (работает в фоне)"""
+def setup_driver() -> webdriver.Chrome:
+    """Headless Chrome для рендеринга JS-страниц документации."""
     chrome_options = Options()
-    chrome_options.add_argument("--headless") # Фоновый режим
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    
-    # Автоматически скачивает нужный ChromeDriver
     service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    return driver
+    return webdriver.Chrome(service=service, options=chrome_options)
 
-def parse_and_save():
-    """Парсит страницы и сохраняет их в текстовые файлы"""
-    driver = setup_driver()
-    parsed_count = 0
-    
+
+def _normalize(url: str) -> str:
+    """Канонический вид URL: без query-параметров и якорей."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+
+def _is_doc_url(url: str) -> bool:
+    """Страница с описанием API-метода, а не навигация."""
+    return url.startswith(BASE_URL) and "/api-reference/" in url and url.endswith(".html")
+
+
+def _save_soup(soup: BeautifulSoup, url: str):
+    """Сохраняет очищенный текст страницы в .txt файл. Возвращает имя файла."""
     try:
-        for url in URLS_TO_PARSE:
-            logger.info(f"🔍 Парсинг: {url}")
-            driver.get(url)
-            
-            # Ждем 4 секунды, чтобы прогрузился JavaScript на сайте Bitrix24
-            time.sleep(4) 
-            
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            
-            # Удаляем теги скриптов, стилей и навигации, чтобы остался только полезный текст
-            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                tag.extract()
-                
-            # Извлекаем чистый текст
-            text = soup.get_text(separator='\n', strip=True)
-            
-            # Формируем имя файла из URL
-            filename = url.split('/')[-1].replace('.html', '.txt')
-            if not filename:
-                filename = f"page_{parsed_count}.txt"
-                
-            filepath = os.path.join(DATA_DIR, filename)
-            
-            # Сохраняем в файл
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(f"Источник: {url}\n\n")
-                f.write(text)
-                
-            logger.info(f"✅ Успешно сохранено: {filepath}")
-            parsed_count += 1
-            
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.extract()
+        text = soup.get_text(separator="\n", strip=True)
+        filename = url.rstrip("/").split("/")[-1].replace(".html", ".txt")
+        with open(os.path.join(DATA_DIR, filename), "w", encoding="utf-8") as f:
+            f.write(f"Source: {url}\n\n{text}")
+        return filename
+    except Exception as exc:
+        logger.error("Ошибка сохранения %s: %s", url, exc)
+        return None
+
+
+def parse_and_save() -> int:
+    """
+    Обходит ВСЮ документацию Bitrix24 (BFS по внутренним ссылкам),
+    сохраняет страницы и удаляет устаревшие файлы (замечания №2 и №5).
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+    driver = setup_driver()
+    visited = set()
+    queue = [_normalize(START_URL)]
+    written = set()
+
+    try:
+        while queue and len(visited) < PARSE_MAX_PAGES:
+            url = queue.pop(0)
+            if url in visited:
+                continue
+            visited.add(url)
+
+            try:
+                driver.get(url)
+                time.sleep(PARSE_DELAY_SECONDS)
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+            except Exception as exc:
+                logger.warning("Не удалось открыть %s: %s", url, exc)
+                continue
+
+            if _is_doc_url(url):
+                filename = _save_soup(soup, url)
+                if filename:
+                    written.add(filename)
+
+            # Добавляем в очередь все внутренние ссылки страницы
+            for a in soup.find_all("a", href=True):
+                link = _normalize(urljoin(url, a["href"]))
+                if link.startswith(BASE_URL) and link not in visited:
+                    queue.append(link)
+
+            if len(visited) % 10 == 0:
+                logger.info("Просмотрено страниц: %d | сохранено документов: %d",
+                            len(visited), len(written))
     finally:
         driver.quit()
-        
-    logger.info(f"\n🎉 Парсинг завершен! Успешно обработано {parsed_count} страниц.")
-    return parsed_count
+
+    # Замечание №5: удаляем файлы страниц, которых больше нет в документации
+    removed = 0
+    for name in os.listdir(DATA_DIR):
+        if name.endswith(".txt") and name not in written:
+            os.remove(os.path.join(DATA_DIR, name))
+            removed += 1
+
+    logger.info("Устаревших файлов удалено: %d", removed)
+    logger.info("Парсинг завершён: сохранено документов: %d", len(written))
+    return len(written)
+
+
 if __name__ == "__main__":
-    parse_and_save()
+    logger.info("Запуск полного парсинга документации Bitrix24...")
+    count = parse_and_save()
+    logger.info("Готово. Страниц в базе знаний: %d", count)
